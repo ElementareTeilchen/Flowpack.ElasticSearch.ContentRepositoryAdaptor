@@ -306,9 +306,8 @@ class NodeIndexer extends AbstractNodeIndexer implements BulkNodeIndexerInterfac
      */
     protected function removeDuplicateDocuments($contextPath, $contextPathHash, NodeInterface $node)
     {
-        $type = NodeTypeMappingBuilder::convertNodeTypeNameToMappingName($node->getNodeType()->getName());
-        $this->logger->log(sprintf('NodeIndexer: Check duplicate nodes for %s (%s). ContentContextHash: %s', $contextPath, $type, $contextPathHash), LOG_DEBUG, null, 'ElasticSearch (CR)');
-        $result = $this->getIndex()->request('GET', '/_search?scroll=1m&search_type=scan', [], json_encode([
+        $this->logger->log(sprintf('NodeIndexer: Removing node %s from index (if node type changed to %s). ID: %s', $contextPath, $node->getNodeType()->getName(), $contextPathHash), LOG_DEBUG, null, 'ElasticSearch (CR)');
+        $treatedContent = $this->getIndex()->request('GET', '/_search', ['scroll' => '1m'], json_encode([
             'query' => [
                 'bool' => [
                     'must' => [
@@ -318,23 +317,43 @@ class NodeIndexer extends AbstractNodeIndexer implements BulkNodeIndexerInterfac
                     ],
                     'must_not' => [
                         'term' => [
-                            '_type' => $type
+                            '_type' => NodeTypeMappingBuilder::convertNodeTypeNameToMappingName($node->getNodeType()->getName())
                         ]
                     ]
                 ]
+            ],
+            'sort' => [
+                '_doc'
+            ]
+        ]))->getTreatedContent();
+        while (!empty($treatedContent['hits']['hits'])) {
+            $bulkRequest = '';
+            foreach ($treatedContent['hits']['hits'] as $hit) {
+                $bulkRequest .= json_encode([
+                    'delete' => [
+                        '_type' => $hit['_type'],
+                        '_id' => $hit['_id']
+                    ]
+                ]);
+                $bulkRequest .= "\n";
+            }
+            $this->getIndex()->request('POST', '/_bulk', [], $bulkRequest);
+            $scroll_id = $treatedContent['_scroll_id'];
+            $treatedContent = $this->searchClient->request('GET', '/_search/scroll', [], json_encode([
+                'scroll' => '1m',
+                'scroll_id' => $scroll_id
+            ]))->getTreatedContent();
+            $this->searchClient->request('DELETE', '/_search/scroll', [], json_encode([
+                'scroll_id' => [
+                    $scroll_id
+                ]
+            ]));
+        }
+        $this->searchClient->request('DELETE', '/_search/scroll', [], json_encode([
+            'scroll_id' => [
+                $treatedContent['_scroll_id']
             ]
         ]));
-        $treatedContent = $result->getTreatedContent();
-        $scrollId = $treatedContent['_scroll_id'];
-
-        $result = $this->getIndex()->request('GET', '/_search/scroll?scroll=1m', [], $scrollId, false);
-        $treatedContent = $result->getTreatedContent();
-        while (isset($treatedContent['hits']['hits']) && $treatedContent['hits']['hits'] !== []) {
-            $hits = $treatedContent['hits']['hits'];
-            $this->logger->log(sprintf('NodeIndexer: Check duplicate nodes for %s (%s), found %d document(s). ContentContextHash: %s', $contextPath, $type, count($hits), $contextPathHash), LOG_DEBUG, null, 'ElasticSearch (CR)');
-            $result = $this->getIndex()->request('GET', '/_search/scroll?scroll=1m', [], $scrollId, false);
-            $treatedContent = $result->getTreatedContent();
-        }
     }
 
     /**
@@ -364,45 +383,43 @@ class NodeIndexer extends AbstractNodeIndexer implements BulkNodeIndexerInterfac
         $closestFulltextNodeContextPath = str_replace($closestFulltextNode->getContext()->getWorkspace()->getName(), 'live', $closestFulltextNode->getContextPath());
         $closestFulltextNodeContextPathHash = sha1($closestFulltextNodeContextPath);
 
-        $this->currentBulkRequest[] = array(
-            array(
-                'update' => array(
+        $this->currentBulkRequest[] = [
+            [
+                'update' => [
                     '_type' => NodeTypeMappingBuilder::convertNodeTypeNameToMappingName($closestFulltextNode->getNodeType()->getName()),
                     '_id' => $closestFulltextNodeContextPathHash
-                )
-            ),
+                ]
+            ],
             // http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/docs-update.html
-            array(
+            [
                 // first, update the __fulltextParts, then re-generate the __fulltext from all __fulltextParts
-                'script' => [
-                    'inline' => '
-                    if (!ctx._source.containsKey("__fulltextParts")) {
+                'script' => '
+					if (!ctx._source.containsKey("__fulltextParts")) {
 						ctx._source.__fulltextParts = new LinkedHashMap();
 					}
 					ctx._source.__fulltextParts[identifier] = fulltext;
 					ctx._source.__fulltext = new LinkedHashMap();
 
-					Iterator<LinkedHashMap.Entry<String, LinkedHashMap>> fulltextByNode = ctx._source.__fulltextParts.entrySet().iterator();
-					for (fulltextByNode; fulltextByNode.hasNext();) {
-						Iterator<LinkedHashMap.Entry<String, String>> elementIterator = fulltextByNode.next().getValue().entrySet().iterator();
-						for (elementIterator; elementIterator.hasNext();) {
-							Map.Entry<String, String> element = elementIterator.next();
-							String value;
+                    Iterator<LinkedHashMap.Entry<String, LinkedHashMap>> fulltextByNode = ctx._source.__fulltextParts.entrySet().iterator();
+                    for (fulltextByNode; fulltextByNode.hasNext();) {
+                        Iterator<LinkedHashMap.Entry<String, String>> elementIterator = fulltextByNode.next().getValue().entrySet().iterator();
+                        for (elementIterator; elementIterator.hasNext();) {
+                            Map.Entry<String, String> element = elementIterator.next();
+                            String value;
 
-							if (ctx._source.__fulltext.containsKey(element.key)) {
-								value = ctx._source.__fulltext[element.key] + " " + element.value.trim();
-							} else {
-								value = element.value.trim();
-							}
+                            if (ctx._source.__fulltext.containsKey(element.key)) {
+                                value = ctx._source.__fulltext[element.key] + " " + element.value.trim();
+                            } else {
+                                value = element.value.trim();
+                            }
 
 							ctx._source.__fulltext[element.key] = value;
 						}
 					}
-                                ',
-                    'params' => [
-                        'identifier' => $node->getIdentifier(),
-                        'fulltext' => $fulltextIndexOfNode
-                    ]
+				',
+                'params' => [
+                    'identifier' => $node->getIdentifier(),
+                    'fulltext' => $fulltextIndexOfNode
                 ],
                 'upsert' => [
                     '__fulltext' => $fulltextIndexOfNode,
@@ -411,8 +428,8 @@ class NodeIndexer extends AbstractNodeIndexer implements BulkNodeIndexerInterfac
                     ]
                 ],
                 'lang' => 'groovy'
-            )
-        );
+            ]
+        ];
     }
 
 
