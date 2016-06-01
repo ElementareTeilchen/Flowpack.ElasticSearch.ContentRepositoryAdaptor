@@ -164,8 +164,8 @@ class NodeIndexer extends AbstractNodeIndexer
             $mappingType = $this->getIndex()->findType(NodeTypeMappingBuilder::convertNodeTypeNameToMappingName($nodeType));
 
             // Remove document with the same contextPathHash but different NodeType, required after NodeType change
-            $this->logger->log(sprintf('NodeIndexer: Removing node %s from index (if node type changed from %s). ID: %s', $contextPath, $node->getNodeType()->getName(), $contextPathHash), LOG_DEBUG, NULL, 'ElasticSearch (CR)');
-            $this->getIndex()->request('DELETE', '/_query', array(), json_encode([
+            $this->logger->log(sprintf('NodeIndexer: Removing node %s from index (if node type changed to %s). ID: %s', $contextPath, $node->getNodeType()->getName(), $contextPathHash), LOG_DEBUG, NULL, 'ElasticSearch (CR)');
+            $response = $this->getIndex()->request('GET', '/_search', ['scroll' => '1m'], json_encode([
                 'query' => [
                     'bool' => [
                         'must' => [
@@ -179,8 +179,34 @@ class NodeIndexer extends AbstractNodeIndexer
                             ]
                         ],
                     ]
+                ],
+                'sort' => [
+                    '_doc'
                 ]
-            ]));
+            ]))->getTreatedContent();
+            while (!empty($response['hits']['hits'])) {
+                $bulkRequest = '';
+                foreach ($response['hits']['hits'] as $hit) {
+                    $bulkRequest .= json_encode([
+                        'delete' => [
+                            '_type' => $hit['_type'],
+                            '_id' => $hit['_id']
+                        ]
+                    ]);
+                    $bulkRequest .= "\n";
+                }
+                $this->getIndex()->request('POST', '/_bulk', [], $bulkRequest);
+                $scroll_id = $response['_scroll_id'];
+                $response = $this->searchClient->request('GET', '/_search/scroll', [], json_encode([
+                    'scroll' => '1m',
+                    'scroll_id' => $scroll_id
+                ]))->getTreatedContent();
+                $this->searchClient->request('DELETE', '/_search/scroll', [], json_encode([
+                    'scroll_id' => [
+                        $scroll_id
+                    ]
+                ]));
+            }
 
             if ($node->isRemoved()) {
                 // TODO: handle deletion from the fulltext index as well
@@ -227,12 +253,12 @@ class NodeIndexer extends AbstractNodeIndexer
                         // http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/docs-update.html
                         array(
                             'script' => '
-							fulltext = (ctx._source.containsKey("__fulltext") ? ctx._source.__fulltext : new LinkedHashMap());
-							fulltextParts = (ctx._source.containsKey("__fulltextParts") ? ctx._source.__fulltextParts : new LinkedHashMap());
-							ctx._source = newData;
-							ctx._source.__fulltext = fulltext;
-							ctx._source.__fulltextParts = fulltextParts
-						',
+                                fulltext = (ctx._source.containsKey("__fulltext") ? ctx._source.__fulltext : new LinkedHashMap());
+                                fulltextParts = (ctx._source.containsKey("__fulltextParts") ? ctx._source.__fulltextParts : new LinkedHashMap());
+                                ctx._source = newData;
+                                ctx._source.__fulltext = fulltext;
+                                ctx._source.__fulltextParts = fulltextParts
+                            ',
                             'params' => array(
                                 'newData' => $documentData
                             ),
@@ -318,29 +344,29 @@ class NodeIndexer extends AbstractNodeIndexer
             array(
                 // first, update the __fulltextParts, then re-generate the __fulltext from all __fulltextParts
                 'script' => '
-					if (!ctx._source.containsKey("__fulltextParts")) {
-						ctx._source.__fulltextParts = new LinkedHashMap();
-					}
-					ctx._source.__fulltextParts[identifier] = fulltext;
-					ctx._source.__fulltext = new LinkedHashMap();
+                    if (!ctx._source.containsKey("__fulltextParts")) {
+                        ctx._source.__fulltextParts = new LinkedHashMap();
+                    }
+                    ctx._source.__fulltextParts[identifier] = fulltext;
+                    ctx._source.__fulltext = new LinkedHashMap();
 
-					Iterator<LinkedHashMap.Entry<String, LinkedHashMap>> fulltextByNode = ctx._source.__fulltextParts.entrySet().iterator();
-					for (fulltextByNode; fulltextByNode.hasNext();) {
-						Iterator<LinkedHashMap.Entry<String, String>> elementIterator = fulltextByNode.next().getValue().entrySet().iterator();
-						for (elementIterator; elementIterator.hasNext();) {
-							Map.Entry<String, String> element = elementIterator.next();
-							String value;
+                    Iterator<LinkedHashMap.Entry<String, LinkedHashMap>> fulltextByNode = ctx._source.__fulltextParts.entrySet().iterator();
+                    for (fulltextByNode; fulltextByNode.hasNext();) {
+                        Iterator<LinkedHashMap.Entry<String, String>> elementIterator = fulltextByNode.next().getValue().entrySet().iterator();
+                        for (elementIterator; elementIterator.hasNext();) {
+                            Map.Entry<String, String> element = elementIterator.next();
+                            String value;
 
-							if (ctx._source.__fulltext.containsKey(element.key)) {
-								value = ctx._source.__fulltext[element.key] + " " + element.value.trim();
-							} else {
-								value = element.value.trim();
-							}
+                            if (ctx._source.__fulltext.containsKey(element.key)) {
+                                value = ctx._source.__fulltext[element.key] + " " + element.value.trim();
+                            } else {
+                                value = element.value.trim();
+                            }
 
-							ctx._source.__fulltext[element.key] = value;
-						}
-					}
-				',
+                            ctx._source.__fulltext[element.key] = value;
+                        }
+                    }
+                ',
                 'params' => array(
                     'identifier' => $node->getIdentifier(),
                     'fulltext' => $fulltextIndexOfNode
