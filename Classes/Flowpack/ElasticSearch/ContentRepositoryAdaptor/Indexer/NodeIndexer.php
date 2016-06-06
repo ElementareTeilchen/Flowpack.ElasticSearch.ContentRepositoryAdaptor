@@ -243,29 +243,31 @@ class NodeIndexer extends AbstractNodeIndexer
                     // for fulltext root documents, we need to preserve the "__fulltext" field. That's why we use the
                     // "update" API instead of the "index" API, with a custom script internally; as we
                     // shall not delete the "__fulltext" part of the document if it has any.
-                    $this->currentBulkRequest[] = array(
-                        array(
-                            'update' => array(
+                    $this->currentBulkRequest[] = [
+                        [
+                            'update' => [
                                 '_type' => $document->getType()->getName(),
                                 '_id' => $document->getId()
-                            )
-                        ),
+                            ]
+                        ],
                         // http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/docs-update.html
-                        array(
-                            'script' => '
-                                fulltext = (ctx._source.containsKey("__fulltext") ? ctx._source.__fulltext : new LinkedHashMap());
-                                fulltextParts = (ctx._source.containsKey("__fulltextParts") ? ctx._source.__fulltextParts : new LinkedHashMap());
-                                ctx._source = newData;
-                                ctx._source.__fulltext = fulltext;
-                                ctx._source.__fulltextParts = fulltextParts
-                            ',
-                            'params' => array(
-                                'newData' => $documentData
-                            ),
+                        [
+                            'script' => [
+                                'inline' => /** @lang groovy */'
+                                    fulltext = (ctx._source.containsKey("__fulltext") ? ctx._source.__fulltext : [:]);
+                                    fulltextParts = (ctx._source.containsKey("__fulltextParts") ? ctx._source.__fulltextParts : [:]);
+                                    ctx._source = newData;
+                                    ctx._source.__fulltext = fulltext;
+                                    ctx._source.__fulltextParts = fulltextParts;
+                                ',
+                                'params' => [
+                                    'newData' => $documentData
+                                ]
+                            ],
                             'upsert' => $documentData,
                             'lang' => 'groovy'
-                        )
-                    );
+                        ]
+                    ];
                 } else {
                     // non-fulltext-root documents can be indexed as-they-are
                     $this->currentBulkRequest[] = array(
@@ -333,53 +335,55 @@ class NodeIndexer extends AbstractNodeIndexer
         $closestFulltextNodeContextPath = str_replace($closestFulltextNode->getContext()->getWorkspace()->getName(), 'live', $closestFulltextNode->getContextPath());
         $closestFulltextNodeContextPathHash = sha1($closestFulltextNodeContextPath);
 
-        $this->currentBulkRequest[] = array(
-            array(
-                'update' => array(
+        $this->currentBulkRequest[] = [
+            [
+                'update' => [
                     '_type' => NodeTypeMappingBuilder::convertNodeTypeNameToMappingName($closestFulltextNode->getNodeType()->getName()),
                     '_id' => $closestFulltextNodeContextPathHash
-                )
-            ),
+                ]
+            ],
             // http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/docs-update.html
-            array(
+            [
                 // first, update the __fulltextParts, then re-generate the __fulltext from all __fulltextParts
-                'script' => '
-                    if (!ctx._source.containsKey("__fulltextParts")) {
-                        ctx._source.__fulltextParts = new LinkedHashMap();
-                    }
-                    ctx._source.__fulltextParts[identifier] = fulltext;
-                    ctx._source.__fulltext = new LinkedHashMap();
-
-                    Iterator<LinkedHashMap.Entry<String, LinkedHashMap>> fulltextByNode = ctx._source.__fulltextParts.entrySet().iterator();
-                    for (fulltextByNode; fulltextByNode.hasNext();) {
-                        Iterator<LinkedHashMap.Entry<String, String>> elementIterator = fulltextByNode.next().getValue().entrySet().iterator();
-                        for (elementIterator; elementIterator.hasNext();) {
-                            Map.Entry<String, String> element = elementIterator.next();
-                            String value;
-
-                            if (ctx._source.__fulltext.containsKey(element.key)) {
-                                value = ctx._source.__fulltext[element.key] + " " + element.value.trim();
-                            } else {
-                                value = element.value.trim();
-                            }
-
-                            ctx._source.__fulltext[element.key] = value;
+                'script' => [
+                    'inline' => /** @lang groovy */'
+                        if (!ctx._source.containsKey("__fulltextParts")) {
+                            ctx._source.__fulltextParts = [:];
                         }
-                    }
-                ',
-                'params' => array(
-                    'identifier' => $node->getIdentifier(),
-                    'fulltext' => $fulltextIndexOfNode
-                ),
-                'upsert' => array(
+                        ctx._source.__fulltextParts[identifier] = fulltext;
+                        ctx._source.__fulltext = [:];
+
+                        Iterator<LinkedHashMap.Entry<String, LinkedHashMap>> fulltextByNode = ctx._source.__fulltextParts.entrySet().iterator();
+                        for (fulltextByNode; fulltextByNode.hasNext();) {
+                            Iterator<LinkedHashMap.Entry<String, String>> elementIterator = fulltextByNode.next().getValue().entrySet().iterator();
+                            for (elementIterator; elementIterator.hasNext();) {
+                                Map.Entry<String, String> element = elementIterator.next();
+                                String value;
+
+                                if (ctx._source.__fulltext.containsKey(element.key)) {
+                                    value = ctx._source.__fulltext[element.key] + " " + element.value.trim();
+                                } else {
+                                    value = element.value.trim();
+                                }
+
+                                ctx._source.__fulltext[element.key] = value;
+                            }
+                        }
+                    ',
+                    'params' => [
+                        'identifier' => $node->getIdentifier(),
+                        'fulltext' => $fulltextIndexOfNode
+                    ]
+                ],
+                'upsert' => [
                     '__fulltext' => $fulltextIndexOfNode,
-                    '__fulltextParts' => array(
+                    '__fulltextParts' => [
                         $node->getIdentifier() => $fulltextIndexOfNode
-                    )
-                ),
+                    ]
+                ],
                 'lang' => 'groovy'
-            )
-        );
+            ]
+        ];
     }
 
 
