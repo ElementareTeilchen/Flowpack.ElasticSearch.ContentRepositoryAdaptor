@@ -265,13 +265,13 @@ class NodeIndexer extends AbstractNodeIndexer implements BulkNodeIndexerInterfac
                     // http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/docs-update.html
                     [
                         'script' => [
-                            'inline' => '
-                                    fulltext = (ctx._source.containsKey("__fulltext") ? ctx._source.__fulltext : new LinkedHashMap());
-                                    fulltextParts = (ctx._source.containsKey("__fulltextParts") ? ctx._source.__fulltextParts : new LinkedHashMap());
-                                    ctx._source = newData;
-                                    ctx._source.__fulltext = fulltext;
-                                    ctx._source.__fulltextParts = fulltextParts
-                                ',
+                            'inline' => /** @lang groovy */'
+                                fulltext = (ctx._source.containsKey("__fulltext") ? ctx._source.__fulltext : new LinkedHashMap());
+                                fulltextParts = (ctx._source.containsKey("__fulltextParts") ? ctx._source.__fulltextParts : new LinkedHashMap());
+                                ctx._source = newData;
+                                ctx._source.__fulltext = fulltext;
+                                ctx._source.__fulltextParts = fulltextParts;
+                            ',
                             'params' => [
                                 'newData' => $documentData
                             ]
@@ -393,33 +393,35 @@ class NodeIndexer extends AbstractNodeIndexer implements BulkNodeIndexerInterfac
             // http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/docs-update.html
             [
                 // first, update the __fulltextParts, then re-generate the __fulltext from all __fulltextParts
-                'script' => '
-					if (!ctx._source.containsKey("__fulltextParts")) {
-						ctx._source.__fulltextParts = new LinkedHashMap();
-					}
-					ctx._source.__fulltextParts[identifier] = fulltext;
-					ctx._source.__fulltext = new LinkedHashMap();
+                'script' => [
+                    'inline' => /** @lang groovy */'
+                        if (!ctx._source.containsKey("__fulltextParts")) {
+                            ctx._source.__fulltextParts = new LinkedHashMap();
+                        }
+                        ctx._source.__fulltextParts[identifier] = fulltext;
+                        ctx._source.__fulltext = new LinkedHashMap();
 
-                    Iterator<LinkedHashMap.Entry<String, LinkedHashMap>> fulltextByNode = ctx._source.__fulltextParts.entrySet().iterator();
-                    for (fulltextByNode; fulltextByNode.hasNext();) {
-                        Iterator<LinkedHashMap.Entry<String, String>> elementIterator = fulltextByNode.next().getValue().entrySet().iterator();
-                        for (elementIterator; elementIterator.hasNext();) {
-                            Map.Entry<String, String> element = elementIterator.next();
-                            String value;
+                        Iterator<LinkedHashMap.Entry<String, LinkedHashMap>> fulltextByNode = ctx._source.__fulltextParts.entrySet().iterator();
+                        for (fulltextByNode; fulltextByNode.hasNext();) {
+                            Iterator<LinkedHashMap.Entry<String, String>> elementIterator = fulltextByNode.next().getValue().entrySet().iterator();
+                            for (elementIterator; elementIterator.hasNext();) {
+                                Map.Entry<String, String> element = elementIterator.next();
+                                String value;
 
-                            if (ctx._source.__fulltext.containsKey(element.key)) {
-                                value = ctx._source.__fulltext[element.key] + " " + element.value.trim();
-                            } else {
-                                value = element.value.trim();
+                                if (ctx._source.__fulltext.containsKey(element.key)) {
+                                    value = ctx._source.__fulltext[element.key] + " " + element.value.trim();
+                                } else {
+                                    value = element.value.trim();
+                                }
+
+                                ctx._source.__fulltext[element.key] = value;
                             }
-
-							ctx._source.__fulltext[element.key] = value;
-						}
-					}
-				',
-                'params' => [
-                    'identifier' => $node->getIdentifier(),
-                    'fulltext' => $fulltextIndexOfNode
+                        }
+                    ',
+                    'params' => [
+                        'identifier' => $node->getIdentifier(),
+                        'fulltext' => $fulltextIndexOfNode
+                    ]
                 ],
                 'upsert' => [
                     '__fulltext' => $fulltextIndexOfNode,
