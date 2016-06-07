@@ -307,7 +307,7 @@ class NodeIndexer extends AbstractNodeIndexer implements BulkNodeIndexerInterfac
     protected function removeDuplicateDocuments($contextPath, $contextPathHash, NodeInterface $node)
     {
         $this->logger->log(sprintf('NodeIndexer: Removing node %s from index (if node type changed to %s). ID: %s', $contextPath, $node->getNodeType()->getName(), $contextPathHash), LOG_DEBUG, null, 'ElasticSearch (CR)');
-        $treatedContent = $this->getIndex()->request('GET', '/_search', ['scroll' => '1m'], json_encode([
+        $treatedContent = $this->getIndex()->request('GET', '/_search?scroll=1m', [], json_encode([
             'query' => [
                 'bool' => [
                     'must' => [
