@@ -1,9 +1,7 @@
-
-'TYPO3.Neos:Node': &node
+'unstructured': &node
   search:
     fulltext:
       enable: true
-
   properties:
 
     '__identifier':
@@ -84,33 +82,6 @@
           format: 'date_time_no_millis'
         indexing: '${(node.creationDateTime ? Date.format(node.creationDateTime, "Y-m-d\TH:i:sP") : null)}'
 
-'unstructured': *node
-
-'TYPO3.Neos:Hidable':
-  properties:
-    '_hidden':
-      search:
-        indexing: '${node.hidden}'
-
-'TYPO3.Neos:Timable':
-  properties:
-    '_hiddenBeforeDateTime':
-      search:
-        elasticSearchMapping:
-          type: date
-          include_in_all: false
-          format: 'date_time_no_millis'
-        indexing: '${(node.hiddenBeforeDateTime ? Date.format(node.hiddenBeforeDateTime, "Y-m-d\TH:i:sP") : null)}'
-
-    '_hiddenAfterDateTime':
-      search:
-        elasticSearchMapping:
-          type: date
-          include_in_all: false
-          format: 'date_time_no_millis'
-        indexing: '${(node.hiddenAfterDateTime ? Date.format(node.hiddenAfterDateTime, "Y-m-d\TH:i:sP") : null)}'
-
-
 'TYPO3.Neos:Document':
   search:
     fulltext:
@@ -159,6 +130,54 @@
               include_in_all: true
               boost: 1
 
+'TYPO3.Neos:Hidable':
+  properties:
+    '_hidden':
+      search:
+        indexing: '${node.hidden}'
+
+'TYPO3.Neos:Node': *node
+
+'TYPO3.Neos:Timable':
+  properties:
+    '_hiddenBeforeDateTime':
+      search:
+        elasticSearchMapping:
+          type: date
+          include_in_all: false
+          format: 'date_time_no_millis'
+        indexing: '${(node.hiddenBeforeDateTime ? Date.format(node.hiddenBeforeDateTime, "Y-m-d\TH:i:sP") : null)}'
+
+    '_hiddenAfterDateTime':
+      search:
+        elasticSearchMapping:
+          type: date
+          include_in_all: false
+          format: 'date_time_no_millis'
+        indexing: '${(node.hiddenAfterDateTime ? Date.format(node.hiddenAfterDateTime, "Y-m-d\TH:i:sP") : null)}'
+
+
+'TYPO3.Neos.NodeTypes:Html':
+  properties:
+    source:
+      search:
+        fulltextExtractor: '${Indexing.extractHtmlTags(value)}'
+
+'TYPO3.Neos.NodeTypes:ImageCaptionMixin':
+  properties:
+    caption:
+      search:
+        fulltextExtractor: '${Indexing.extractHtmlTags(value)}'
+
+'TYPO3.Neos.NodeTypes:ImageMixin':
+  properties:
+    alternativeText:
+      search:
+        fulltextExtractor: '${Indexing.extractHtmlTags(value)}'
+    title:
+      search:
+        fulltextExtractor: '${Indexing.extractHtmlTags(value)}'
+
 'TYPO3.Neos.NodeTypes:TextMixin':
   properties:
     text:
@@ -168,11 +187,5 @@
 'TYPO3.Neos.NodeTypes:TitleMixin':
   properties:
     title:
-      search:
-        fulltextExtractor: '${Indexing.extractHtmlTags(value)}'
-
-'TYPO3.Neos.NodeTypes:Html':
-  properties:
-    source:
       search:
         fulltextExtractor: '${Indexing.extractHtmlTags(value)}'
