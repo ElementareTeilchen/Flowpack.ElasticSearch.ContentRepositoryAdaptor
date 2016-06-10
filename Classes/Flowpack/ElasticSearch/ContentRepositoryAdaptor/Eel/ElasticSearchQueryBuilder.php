@@ -707,7 +707,8 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
     public function fulltext($searchWord)
     {
         $this->appendAtPath('query.bool.must', [
-            'query_string' => [
+            // https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-simple-query-string-query.html
+            'simple_query_string' => [
                 'query' => $searchWord
             ]
         ]);
