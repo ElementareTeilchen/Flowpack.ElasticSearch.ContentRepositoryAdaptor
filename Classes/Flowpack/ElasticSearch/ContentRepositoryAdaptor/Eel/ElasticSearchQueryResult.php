@@ -192,10 +192,11 @@ class ElasticSearchQueryResult implements QueryResultInterface, ProtectedContext
     public function getAggregations()
     {
         $this->initialize();
-        if (array_key_exists('aggregations', $this->result)) {
+        if (isset($this->result['aggregations'])) {
             return $this->result['aggregations'];
+        } else {
+            return [];
         }
-        return array();
     }
 
     /**
@@ -239,11 +240,11 @@ class ElasticSearchQueryResult implements QueryResultInterface, ProtectedContext
     public function getSortValuesForNode(NodeInterface $node)
     {
         $hit = $this->searchHitForNode($node);
-        if (is_array($hit) && array_key_exists('sort', $hit)) {
+        if (is_array($hit) && isset($hit['sort'])) {
             return $hit['sort'];
+        } else {
+            return [];
         }
-
-        return array();
     }
 
     /**

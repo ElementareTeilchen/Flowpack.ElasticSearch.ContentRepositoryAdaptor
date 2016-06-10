@@ -66,7 +66,7 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
      *
      * @var array
      */
-    protected $unsupportedFieldsInCountRequest = array('fields', 'sort', 'from', 'size', 'highlight', 'aggs', 'aggregations');
+    protected $unsupportedFieldsInCountRequest = ['_source', 'fields', 'sort', 'from', 'size', 'highlight', 'aggs', 'aggregations'];
 
     /**
      * This (internal) array stores, for the last search request, a mapping from Node Identifiers
@@ -78,63 +78,57 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
      */
     protected $elasticSearchHitsIndexedByNodeFromLastRequest;
 
-
     /**
      * The ElasticSearch request, as it is being built up.
      * @var array
      */
-    protected $request = array(
+    protected $request = [
+        // https://www.elastic.co/guide/en/elasticsearch/reference/current/search-request-source-filtering.html
+        '_source' => '__path',
         // http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-request-query.html
-        'query' => array(
-            // The top-level query we're working on is a *filtered* query, as this allows us to efficiently
-            // apply *global constraints* in the form of *filters* which apply on the whole query.
-            //
-            // NOTE: we do NOT add a search request FILTER to the query currently, because that would mean
-            // that the filters ONLY apply for query results, but NOT for facet calculation (as explained on
-            // http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/search-request-filter.html)
-            //
-            // Reference: http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/query-dsl-filtered-query.html
-            'filtered' => array(
-                'query' => array(
-                    'bool' => array(
-                        'must' => array(
-                            array(
-                                'match_all' => array()
-                            )
-                        )
-                    )
-
-                ),
-                'filter' => array(
-                    // http://www.elasticsearch.org/guide/en/elasticsearch/reference/current/query-dsl-bool-filter.html
-                    'bool' => array(
-                        'must' => array(),
-                        'should' => array(),
-                        'must_not' => array(
-                            // Filter out all hidden elements
-                            array(
-                                'term' => array('_hidden' => true)
-                            ),
-                            // if now < hiddenBeforeDateTime: HIDE
-                            // -> hiddenBeforeDateTime > now
-                            array(
-                                'range' => array('_hiddenBeforeDateTime' => array(
-                                    'gt' => 'now'
-                                ))
-                            ),
-                            array(
-                                'range' => array('_hiddenAfterDateTime' => array(
-                                    'lt' => 'now'
-                                ))
-                            ),
-                        ),
-                    )
-                )
-            )
-        ),
-        'fields' => array('__path')
-    );
-
+        'query' => [
+            'bool' => [
+                'must' => [
+                    [
+                        'match_all' => []
+                    ]
+                ],
+                'should' => [],
+                'must_not' => [],
+                // https://www.elastic.co/guide/en/elasticsearch/reference/current/query-filter-context.html
+                'filter' => [
+                    // https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-bool-query.html
+                    'bool' => [
+                        'must' => [],
+                        'should' => [],
+                        'must_not' => [
+                            [
+                                // Filter out all hidden elements
+                                'term' => ['_hidden' => true]
+                            ],
+                            [
+                                'range' => [
+                                    // if now < hiddenBeforeDateTime: HIDDEN
+                                    // -> hiddenBeforeDateTime > now
+                                    '_hiddenBeforeDateTime' => [
+                                        'gt' => 'now'
+                                    ]
+                                ]
+                            ],
+                            [
+                                'range' => [
+                                    // if hiddenAfterDateTime < now: HIDDEN
+                                    '_hiddenAfterDateTime' => [
+                                        'lt' => 'now'
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+    ];
 
     /**
      * @var array
@@ -326,7 +320,6 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
         return $this->queryFilter('range', array($propertyName => array('lt' => $value)));
     }
 
-
     /**
      * add a range filter (lte) for the given property
      *
@@ -345,7 +338,7 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
      */
 
     /**
-     * Add a filter to query.filtered.filter
+     * Add a filter to request query
      *
      * @param string $filterType
      * @param mixed $filterOptions
@@ -356,10 +349,10 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
      */
     public function queryFilter($filterType, $filterOptions, $clauseType = 'must')
     {
-        if (!in_array($clauseType, array('must', 'should', 'must_not'))) {
+        if (!in_array($clauseType, ['must', 'should', 'must_not'])) {
             throw new QueryBuildingException('The given clause type "' . $clauseType . '" is not supported. Must be one of "must", "should", "must_not".', 1383716082);
         }
-        return $this->appendAtPath('query.filtered.filter.bool.' . $clauseType, array($filterType => $filterOptions));
+        return $this->appendAtPath('query.bool.filter.bool.' . $clauseType, [$filterType => $filterOptions]);
     }
 
     /**
@@ -387,7 +380,7 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
     }
 
     /**
-     * Add multiple filters to query.filtered.filter
+     * Add multiple filters to request query
      *
      * Example Usage:
      *
@@ -411,9 +404,9 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
         foreach ($data as $key => $value) {
             if ($value !== null) {
                 if (is_array($value)) {
-                    $this->queryFilter('terms', array($key => $value), $clauseType);
+                    $this->queryFilter('terms', [$key => $value], $clauseType);
                 } else {
-                    $this->queryFilter('term', array($key => $value), $clauseType);
+                    $this->queryFilter('term', [$key => $value], $clauseType);
                 }
             }
         }
@@ -470,8 +463,8 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
      */
     public function aggregation($name, array $aggregationDefinition, $parentPath = null)
     {
-        if (!array_key_exists("aggregations", $this->request)) {
-            $this->request['aggregations'] = array();
+        if (!isset($this->request['aggregations'])) {
+            $this->request['aggregations'] = [];
         }
 
         if ($parentPath !== null) {
@@ -501,8 +494,8 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
         $path =& $this->request['aggregations'];
 
         foreach (explode(".", $parentPath) as $subPart) {
-            if ($path == null || !array_key_exists($subPart, $path)) {
-                throw new QueryBuildingException("The parent path ".$subPart." could not be found when adding a sub aggregation");
+            if ($path == null || !isset($path[$subPart])) {
+                throw new QueryBuildingException("The parent path " . $subPart . " could not be found when adding a sub aggregation");
             }
             $path =& $path[$subPart]['aggregations'];
         }
@@ -560,7 +553,7 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
      */
     public function suggestions($name, array $suggestionDefinition)
     {
-        if (!array_key_exists('suggest', $this->request)) {
+        if (!isset($this->request['suggest'])) {
             $this->request['suggest'] = [];
         }
 
@@ -599,7 +592,7 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
      */
     public function getTotalItems()
     {
-        if (array_key_exists('total', $this->result)) {
+        if (isset($this->result['total'])) {
             return (int) $this->result['total'];
         }
     }
@@ -655,7 +648,7 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
             $this->logger->log(sprintf('Query Log (%s): %s -- execution time: %s ms -- Limit: %s -- Number of results returned: %s -- Total Results: %s',
                 $this->logMessage, json_encode($request), (($timeAfterwards - $timeBefore) * 1000), $this->limit, count($this->result['hits']['hits']), $this->result['hits']['total']), LOG_DEBUG);
         }
-        if (array_key_exists('hits', $this->result) && is_array($this->result['hits']) && count($this->result['hits']) > 0) {
+        if (isset($this->result['hits']) && is_array($this->result['hits']) && count($this->result['hits']) > 0) {
             $this->result['nodes'] = $this->convertHitsToNodes($this->result['hits']);
         }
 
@@ -674,7 +667,6 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
         $result = $elasticSearchQuery->execute(true);
         return $result;
     }
-
 
     /**
      * Return the total number of hits for the query.
@@ -714,11 +706,11 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
      */
     public function fulltext($searchWord)
     {
-        $this->appendAtPath('query.filtered.query.bool.must', array(
-            'query_string' => array(
+        $this->appendAtPath('query.bool.must', [
+            'query_string' => [
                 'query' => $searchWord
-            )
-        ));
+            ]
+        ]);
 
         // We automatically enable result highlighting when doing fulltext searches. It is up to the user to use this information or not use it.
         return $this->highlight(150, 2);
@@ -818,7 +810,7 @@ class ElasticSearchQueryBuilder implements QueryBuilderInterface, ProtectedConte
          * we might be able to use https://github.com/elasticsearch/elasticsearch/issues/3300 as soon as it is merged.
          */
         foreach ($hits['hits'] as $hit) {
-            $nodePath = current($hit['fields']['__path']);
+            $nodePath = $hit['_source']['__path'];
             $node = $this->contextNode->getNode($nodePath);
             if ($node instanceof NodeInterface && !isset($nodes[$node->getIdentifier()])) {
                 $nodes[$node->getIdentifier()] = $node;
