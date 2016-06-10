@@ -219,27 +219,33 @@ class NodeIndexer extends AbstractNodeIndexer implements BulkNodeIndexerInterfac
 
             $this->logger->log(sprintf('NodeIndexer: Added / updated node %s. ID: %s Context: %s', $contextPath, $contextPathHash, json_encode($node->getContext()->getProperties())), LOG_DEBUG, null, 'ElasticSearch (CR)');
         };
-
-        $dimensionCombinations = $this->contentDimensionCombinator->getAllAllowedCombinations();
-        $workspaceName = $targetWorkspaceName ?: 'live';
-        $nodeIdentifier = $node->getIdentifier();
-        if ($dimensionCombinations !== []) {
-            foreach ($dimensionCombinations as $combination) {
-                $context = $this->contextFactory->create(['workspaceName' => $workspaceName, 'dimensions' => $combination]);
+        // If node is not only removed, but deleted in the CR, even with "removedContentShown" the removed node would be missing in the context
+        if ($node->isRemoved()) {
+            $indexer($node, $targetWorkspaceName);
+        } else {
+            $contextProperties = [
+                'workspaceName' => $targetWorkspaceName ?: 'live',
+                'invisibleContentShown' => true,
+                'removedContentShown' => true,
+                'inaccessibleContentShown' => true
+            ];
+            $nodeIdentifier = $node->getIdentifier();
+            $dimensionCombinations = $this->contentDimensionCombinator->getAllAllowedCombinations();
+            if ($dimensionCombinations !== []) {
+                foreach ($dimensionCombinations as $combination) {
+                    $context = $this->contextFactory->create(array_merge($contextProperties, ['dimensions' => $combination]));
+                    $nodeInContext = $context->getNodeByIdentifier($nodeIdentifier);
+                    if ($nodeInContext !== null) {
+                        $indexer($nodeInContext, $targetWorkspaceName);
+                    }
+                }
+            } else {
+                $context = $this->contextFactory->create($contextProperties);
                 $nodeInContext = $context->getNodeByIdentifier($nodeIdentifier);
                 if ($nodeInContext !== null) {
                     $indexer($nodeInContext, $targetWorkspaceName);
                 }
             }
-        } else {
-            $context = $this->contextFactory->create(['workspaceName' => $workspaceName]);
-            $nodeInContext = $context->getNodeByIdentifier($nodeIdentifier);
-            if ($nodeInContext !== NULL) {
-                $indexer($nodeInContext, $targetWorkspaceName);
-            }
-        }
-        if ($node->isRemoved()) {
-            $indexer($node, $targetWorkspaceName);
         }
     }
 
