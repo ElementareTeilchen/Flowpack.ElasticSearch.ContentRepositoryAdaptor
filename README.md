@@ -556,14 +556,17 @@ TYPO3:
         'TYPO3\Media\Domain\Model\Asset':
           elasticSearchMapping:
             type: attachment
-            include_in_all: true
-          indexing: ${Indexing.indexAsset(value)}
-
+            fields:
+              content:
+                include_in_all: true
+          indexing: ${ElasticSearch.Indexing.indexAsset(value)}
         'array<TYPO3\Media\Domain\Model\Asset>':
           elasticSearchMapping:
             type: attachment
-            include_in_all: true
-          indexing: ${Indexing.indexAsset(value)}
+            fields:
+              content:
+                include_in_all: true
+          indexing: ${ElasticSearch.Indexing.indexAsset(value)}
 ```
 
 ## Configurable Elasticsearch Mapping
